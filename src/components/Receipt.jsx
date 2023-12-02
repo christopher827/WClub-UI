@@ -1,4 +1,4 @@
-import {useLocation } from 'react'
+import {useLocation } from 'react-router-dom'
 
 function Receipt() {
     const location = useLocation();
