@@ -1,0 +1,374 @@
+const express = require("express");
+const router = express.Router();
+const User=require("../models/User")
+const validator=require("validator")
+const bcrypt=require("bcrypt")
+const jwt=require("jsonwebtoken")
+const nodemailer=require("nodemailer")
+const sendMailToNewUsers=require("../utils/SendMail")
+// const sendToken=require("../utils/JwtToken")
+const {getJwtToken,sendToken}=require("../utils/JwtToken")
+const { isAuthenticated } = require("../middleware/auth")
+const {upload}=require("../multer")
+const fs=require("fs")
+const path=require("path")
+
+router.post("/signup",upload.single("file"),async(req,res)=>{
+    const {email,firstName,lastName,country,phoneNumber,address,gender,occupation,dateOfBirth,password,confirmPassword,pin,confirmPin}=req.body;   
+if (!email || !firstName || !lastName || !country || !phoneNumber || !address || !gender || !occupation || !dateOfBirth || !password || !confirmPassword || !pin || !confirmPin) {
+return res.status(400).json({message:"All fields must be filled"})
+}
+if (!validator.isEmail(email)) {
+    return res.status(400).json({message:"Invalid email format"})
+}
+if (!validator.isStrongPassword(password)) {
+    return res.status(400).json({message:"Password not strong enough"})
+}
+const existingEmail=await User.findOne({email}) //Checks if the email is in our database
+if (existingEmail) {
+    const filename=req.file.filename;
+    const filePath=`uploads/${filename}`
+    fs.unlink(filePath,(err)=>{
+        if (err) {
+          console.log(err)
+          res.status(500).json({message:"Error deleting file"})
+        }
+        })
+        
+    return res.status(400).json({message:"Email already in use"})
+}
+const filename=req.file.filename;
+const fileUrl=path.join(filename);
+
+if(phoneNumber.toString().length !== 13){
+    return res.status(400).json({message:"Phone Number is Incorrect"})
+}
+const phoneNumberExists=await User.findOne({phoneNumber})
+if (phoneNumberExists) {
+    return res.status(400).json({message:"Phone Number Already In Use"})
+}
+if (confirmPassword!==password) {
+    return res.status(400).json({message:"Passwords do not match"})
+}
+if (pin.toString().length !== 4) {
+ return res.status(400).json({message:"Pin can only be maximum of 4 characters"})
+}
+if (confirmPin !== pin) {
+    return res.status(400).json({message:"The Pins do not match"})
+}
+try {
+    const salt=await bcrypt.genSalt(10)
+    const hash=await bcrypt.hash(password,salt)
+    const hashedPin=await bcrypt.hash(pin,salt)
+    const accountNumber=await generateAccountNumber()
+    const user=await User.create({email,firstName,lastName,country,phoneNumber,address,gender,occupation,dateOfBirth,password:hash,pin:hashedPin,accountNumber,avatar:fileUrl})
+   const newUsers=await  sendMailToNewUsers({
+    email:user.email,
+     subject:"Welcome to The W Club",
+     message:`Dear ${user.firstName}, I'm thrilled to welcome you to the W Club! we appreciate your trust in us and look forward to helping you manage your finances with our online banking services.
+     Your account has been successfully created, and we're excited to share some informations with you. Your account details are as follows 
+
+      Name:${user.firstName} ${user.lastName} 
+    Wallet ID:${user.accountNumber}
+       Account Balance:NGN 1,000,000.00
+       
+We're happy to let you know that your account has been credited with a welcome bonus of NGN 1,000,000.00 for activating your account.
+To get started, please log in to your account by following these simple steps:
+
+1.Go to our website or download our mobile app from App Store or Google Play.
+2.Click the 'Log in' button to enter
+3.Once your're logged in you'll have access to all the features of our online banking platform, including the ability to view your account balances, make transfers, pay bills, and much more.
+
+If you have any questions or concerns, our friendly and knowledgeable support team is available to assist you . You can reach us by phone, email or through our online chatting service, which is available 24/7.
+Thank you again for choosing The W Club as your finance partner, We are commited to providing you with a seamless and secure banking experience, and we're excited to be on this journey with you.
+Best Regards,
+
+Chris
+
+The W Club.
+     `})
+    res.status(200).json({message:"Account Created Successfully"})
+} catch (error) {
+    res.status(500).json({message:error.message})
+}
+})
+router.post("/login-user",async(req,res)=>{
+
+const {email,password}=req.body;
+if (!email || !password) { //If a field or both is left empty, it'll return this message and won't proceed to the next function
+    return res.status(400).json({message:"All fields must be filled"})
+}
+if (!validator.isEmail(email)) {  //Checks if the email entered is valid or not
+    return res.status(400).json({message:"Invalid email format"})      
+}
+const user=await User.findOne({email}) //Checks if the email is in our database
+if (!user) {  //if the email is not, it returns this message
+return res.status(400).json({message:"User doesn't exists!"})
+}
+const match=await bcrypt.compare(password,user.password)
+if (!match) {
+    return res.status(400).json({message:"Please provide the correct information"})
+}
+try {
+    const token = getJwtToken(user); // Generate the JWT token
+    sendToken(user, 200, res, token);
+} catch (error) {
+    res.status(400).json({message:error.message})
+}
+})
+// this code enforces authentication for the /getuser route, ensur ing that only authenticated users can access it. If a user is authenticated, their information is fetched from the database and sent as a response.
+// load user
+
+router.get("/getuser",isAuthenticated,async(req,res,next)=>{
+    try {
+        const user = await User.findById(req.user.id);//looks for the user that was fetched in the database  based on the req.user.id (which was set by the middleware).
+        if (!user) {
+return res.status(400).json({message:"User doesn't exists"})
+        }
+        res.status(200).json({
+            success: true,
+            user,
+          });
+    
+    } catch (error) {
+        res.status(500).json({message:error.message})
+     
+    }
+})
+
+router.get("/logout",async(req,res,next)=>{
+try {
+    res.cookie("token", null, {
+        expires: new Date(Date.now()),
+        httpOnly: true,
+        sameSite: "none",
+        secure: true,
+      });
+      res.status(201).json({
+        success: true,
+        message: "Log out successful",
+      });
+
+} catch (error) {
+    res.status(500).json({message:error.message}) 
+}
+})
+
+// update user password
+router.put("/change-pin", isAuthenticated, async (req, res) => {
+    const { pin, newPin, confirmNewPin } = req.body;
+
+    try {
+        const user = await  User.findById(req.user.id).select(+"pin")
+        const isPinValid = await bcrypt.compare(pin, user.pin);
+
+        if (!isPinValid) {
+            return res.status(400).json({ message: "Please provide correct information" });
+        }
+
+        // Check if newPin and confirmNewPin match
+        if (confirmNewPin !== newPin) {
+            return res.status(400).json({ message: "Pins do not match" });
+        }
+
+        // Update the user's PIN
+        const salt = await bcrypt.genSalt(10);
+        user.pin = await bcrypt.hash(newPin, salt);
+        await user.save();
+
+        res.status(201).json({
+            success: true,
+            message: "Pin updated successfully!",
+        });
+        } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+});
+
+  router.put("/changePassword",isAuthenticated,async(req,res)=>{
+    const {currentPassword,newPassword,confirmNewPassword}=req.body;
+    try {
+        const user = await  User.findById(req.user.id).select("+password")
+        const isPasswordValid =await bcrypt.compare(currentPassword,user.password)
+              if (!isPasswordValid) {
+          return res.status(400).json({ message: "Please provide correct information" });
+        }
+        if (confirmNewPassword !==newPassword) {
+            return res.status(400).json({ message: "Passwords do not match" });        
+        }
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(newPassword, salt);
+        await user.save();
+   
+res.status(200).json({
+    success:true,
+    message:"Password updated successfully"
+})
+    } catch (error) {
+        res.status(500).json({message:error.message})
+    }
+})
+router.get("/getUsersFullName",isAuthenticated,async(req,res)=>{
+    const walletId = req.query.walletId; // Get wallet ID from the request query
+    const user = await  User.findById(req.user.id)
+    if (user) {
+        const fullName = `${user.firstName} ${user.lastName}`;
+        res.json({ name: fullName });   
+       } else {
+        res.status(404).json({ error: "User not found" });
+      }
+})
+router.post("/sendMoney",isAuthenticated,async(req,res)=>{
+    const {accountNumber,amount,description,pin}=req.body;
+    
+    try {
+        const user = await  User.findById(req.user.id)
+        if (amount<=0) {
+            return res.status(400).json({message:"Enter a valid amount"})
+        }     
+        if (user.accountBalance-500 < amount) {
+     return res.status(400).json({message:"Insufficient Fund"})       
+        }
+    if (!description) {
+        return res.status(400).json({message:"Enter a description"})
+    }
+const comparePins=await bcrypt.compare(pin,user.pin)
+if (!comparePins) {
+    return res.status(400).json({message:"Provide correct pin"})
+}
+const isWalletIdValid=await User.findOne({accountNumber})
+if (!isWalletIdValid) {
+    return res.status(400).json({message:"There's no such user"})
+}
+    // Deduct the amount from the sender's account balance
+user.accountBalance = (parseFloat(user.accountBalance) - amount).toString();
+await user.save();
+
+isWalletIdValid.accountBalance=(parseFloat(isWalletIdValid.accountBalance) + amount).toString();
+await isWalletIdValid.save();
+
+
+res.status(200).json({ message: "Money transfer successful" });
+    } catch (error) {
+        res.status(500).json({message:error.message}) 
+    }
+})
+router.put("/update-avatar",isAuthenticated,upload.single("image"),async(req,res)=>{
+try {
+    const existUser=await User.findById(req.user.id)
+    const existAvatarPath=`uploads/${existUser.avatar}`
+    fs.unlinkSync(existAvatarPath);
+    const fileUrl=path.join(req.file.filename);
+    const user=await User.findByIdAndUpdate(req.user.id,{avatar:fileUrl});
+    res.status(200).json({success:true,user})
+} catch (error) {
+    res.status(500).json({message:error.message})
+}
+})
+// const forgottenPassword=async(req,res)=>{
+//     const {email} = req.body;
+//     if (!email) {
+//         return res.status(400).json({message:"Please fill the field"})
+//     }
+//     const user=await User.findOne({email}) //Checks if the email is in our database
+// if (!user) {  //if the email is not, it returns this message
+// return res.status(400).json({message:"User not existing"})
+// }
+// const token=jwt.sign({id:user._id},"MySticSunriseejk&$#",{expiresIn:"1d"})
+//  var transporter=nodemailer.createTransport({
+//     service:'gmail',
+//     auth:{
+//         user:'ossygram70@gmail.com',
+//         pass:'zvtnjmdimrmdrejl'
+//     }
+//  });
+//  var mailOptions = {
+//     from: 'ossygram70@gmail.com',
+//     to:user.email,
+//     subject: 'Reset Password Link',
+//     text: `http://localhost:3000/resetPassword/${user._id}/${token}`
+//   };
+//   transporter.sendMail(mailOptions, function(error, info){
+//     if (error) {
+//       console.log(error);
+//       return res.status(500).json({ message: "Email sending failed" });
+//     } else {
+//       return res.send({message: "Check your gmail account"})
+//     }
+//   });
+// }
+
+// const resetPassword=async(req,res)=>{
+//     const {id, token} = req.params
+//     const {password} = req.body
+//     const verifyToken=await jwt.verify(token,"MySticSunriseejk&$#");
+//     if (!verifyToken) {
+//         return res.status(400).json({message:"Error with the token"})
+//     }
+// const verifyUserInDataBase = await User.findById(id);
+// if (!verifyUserInDataBase) {
+//   return res.status(400).json({ message: "User not in database" });
+// }
+//     if (!validator.isStrongPassword(password)) {
+//         return res.status(400).json({message:"Password not strong enough"})
+//     }
+    
+//     try {
+//         const salt=await bcrypt.genSalt(10)
+//         const hash=await bcrypt.hash(password,salt)
+//     const updatePassword=await User.findByIdAndUpdate({_id:id},{password:hash})
+//     res.status(200).json({message:"Password Reset Successful"})
+
+//     } catch (error) {
+//         res.status(500).json({message:error.message})
+
+//     }
+// }
+// const handleMessage=async(req,res)=>{
+//     const {email,subject,message}=req.body
+//     if (!email || !subject || !message) { //If a field or both is left empty, it'll return this message and won't proceed to the next function
+//         return res.status(400).json({message:"All fields must be filled"})
+//     }
+//     if (!validator.isEmail(email)) {  //Checks if the email entered is valid or not
+//         return res.status(400).json({message:"Invalid email format"})      
+//     }
+//     var transporter=nodemailer.createTransport({
+//         service:'gmail',
+//         auth:{
+//             user:'ossygram70@gmail.com',
+//             pass:'zvtnjmdimrmdrejl'
+//         }
+//      });
+//      var mailOptions = {
+//         from:email,
+//         to: 'ossygram70@gmail.com',
+//         subject: `${subject}\n\n ${email}`,
+//         text: message
+//       };
+//       transporter.sendMail(mailOptions, function(error, info){
+//         if (error) {
+//           console.log(error);
+//           return res.status(500).json({ message: "Email sending failed" });
+//         } else {
+//           return res.send({message: "Thanks for your feedback!"})
+//         }
+//       });
+        
+
+// }
+//This function generates random unique account numbers each time any new user signs up
+// Define an array to store generated account numbers
+
+const generatedAccountNumbers = [];
+// Function to generate a unique account number
+function generateAccountNumber() {
+  let accountNumber;
+  do {
+    // Generate a random 10-character alphanumeric string
+    accountNumber = Math.random().toString(36).substring(2, 12).toUpperCase();
+  } while (generatedAccountNumbers.includes(accountNumber));
+
+
+  return accountNumber;
+}
+module.exports = router;
