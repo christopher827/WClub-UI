@@ -32,7 +32,7 @@ const ChangePassWord=()=>{
       <div className="mb-5 relative">
       <input type={visible ? "text" : "password"} name="password" autoComplete="current-password" placeholder='Enter Current password' value={currentPassword} onChange={(e)=>setCurrentPassword(e.target.value)} className='w-full px-4 py-4 border-b border-solid border-[#0066ff61] focus:outline-none focus:border-b-primaryColor text-[16px] leading-7 text-headingColor placeholder:text-textColor rounded-full cursor-pointer ' />
       {visible ? (
-                        <AiOutlineEye
+                    <AiOutlineEye
                           className="absolute right-2 top-5 cursor-pointer"
                           size={25}
                           onClick={() => setVisible(false)}
