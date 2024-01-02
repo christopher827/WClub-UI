@@ -16,7 +16,7 @@ const ChangePassWord=()=>{
       e.preventDefault()
  await axios.put(`${server}/api/user/changePassword`,{currentPassword,newPassword,confirmNewPassword},{withCredentials:true})
       .then((res)=>{
-        toast.success(res.data.message)
+    toast.success(res.data.message)
       }).catch((error)=>{
       toast.error(error.response.data.message)
       })
